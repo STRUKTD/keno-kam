@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>Keno Capture</title>
+<style>
+  :root{
+    --bg:#0a0b0d; --panel:#15171b; --line:#262a31;
+    --ink:#f2f4f7; --mute:#8b929e;
+    --searching:#e9edf2; --aligning:#f4b740; --captured:#34d27b;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;overflow:hidden}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+  /* Tabs */
+  .tabs{position:fixed;left:0;right:0;bottom:0;z-index:40;display:flex;
+    background:rgba(10,11,13,.92);backdrop-filter:blur(12px);
+    border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
+  .tab{flex:1;border:0;background:none;color:var(--mute);font-size:13px;font-weight:600;
+    padding:12px 6px;display:flex;flex-direction:column;align-items:center;gap:3px}
+  .tab[aria-selected="true"]{color:var(--ink)}
+  .tab .dot{width:5px;height:5px;border-radius:50%;background:transparent}
+  .tab[aria-selected="true"] .dot{background:var(--captured)}
+
+  .view{position:fixed;inset:0;bottom:58px;display:none}
+  .view.active{display:block}
+
+  /* Capture */
+  #cam{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000}
+  #overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+  .hud{position:absolute;left:0;right:0;top:0;z-index:20;display:flex;justify-content:center;
+    padding:calc(env(safe-area-inset-top) + 10px) 12px 0}
+  .pill{background:rgba(21,23,27,.82);border:1px solid var(--line);border-radius:999px;
+    padding:8px 14px;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px}
+  .pill .swatch{width:9px;height:9px;border-radius:50%}
+
+  .result{position:absolute;left:12px;right:12px;bottom:14px;z-index:25;
+    background:rgba(21,23,27,.94);border:1px solid var(--line);border-radius:16px;padding:14px;
+    display:none}
+  .result.show{display:block}
+  .result h3{margin:0 0 8px;font-size:14px;color:var(--mute);font-weight:600}
+  .result .nums{font-size:16px;line-height:1.9;letter-spacing:.5px;word-spacing:6px}
+  .row{display:flex;gap:8px;margin-top:12px}
+  button.act{flex:1;border:0;border-radius:11px;padding:12px;font-size:15px;font-weight:700;
+    background:var(--captured);color:#06210f}
+  button.ghost{flex:1;border:1px solid var(--line);border-radius:11px;padding:12px;
+    font-size:15px;font-weight:600;background:var(--panel);color:var(--ink)}
+
+  .shutter{position:absolute;left:50%;transform:translateX(-50%);bottom:16px;z-index:22;
+    width:64px;height:64px;border-radius:50%;border:4px solid rgba(255,255,255,.85);
+    background:rgba(255,255,255,.16)}
+  .shutter:active{transform:translateX(-50%) scale(.94)}
+
+  /* Gate overlays */
+  .gate{position:absolute;inset:0;z-index:60;background:rgba(8,9,11,.94);
+    display:none;flex-direction:column;align-items:center;justify-content:center;
+    gap:10px;text-align:center;padding:24px}
+  .gate.show{display:flex}
+  .gate .big{font-size:22px;font-weight:800}
+  .gate .sub{color:var(--mute);max-width:340px}
+  .spin{width:26px;height:26px;border:3px solid var(--line);border-top-color:var(--ink);
+    border-radius:50%;animation:sp 1s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  /* Tuning drawer */
+  .gear{position:absolute;top:calc(env(safe-area-inset-top) + 10px);right:12px;z-index:30;
+    width:38px;height:38px;border-radius:50%;border:1px solid var(--line);
+    background:rgba(21,23,27,.82);color:var(--ink);font-size:17px}
+  .drawer{position:absolute;top:0;right:0;bottom:0;z-index:35;width:min(86vw,320px);
+    background:rgba(15,17,21,.97);border-left:1px solid var(--line);
+    transform:translateX(100%);transition:transform .2s ease;padding:16px;
+    padding-top:calc(env(safe-area-inset-top) + 16px);overflow:auto}
+  .drawer.open{transform:translateX(0)}
+  .drawer h2{font-size:15px;margin:0 0 14px}
+  .field{margin-bottom:16px}
+  .field label{display:flex;justify-content:space-between;font-size:13px;color:var(--mute);margin-bottom:6px}
+  .field input[type=range]{width:100%}
+  .field .val{color:var(--ink)}
+  .toggle{display:flex;align-items:center;justify-content:space-between;font-size:14px;margin-bottom:14px}
+
+  /* History */
+  #history{overflow:auto;height:100%;padding:0 0 8px}
+  .htop{position:sticky;top:0;background:var(--bg);display:flex;align-items:center;justify-content:space-between;
+    padding:calc(env(safe-area-inset-top) + 12px) 16px 12px;border-bottom:1px solid var(--line)}
+  .htop h1{font-size:20px;margin:0}
+  .htop button{border:1px solid var(--line);background:var(--panel);color:var(--ink);
+    border-radius:10px;padding:9px 13px;font-size:14px;font-weight:600}
+  .htop button:disabled{opacity:.4}
+  .empty{color:var(--mute);text-align:center;padding:60px 24px}
+  .entry{padding:12px 16px;border-bottom:1px solid var(--line)}
+  .entry .ts{font-size:12px;color:var(--mute);margin-bottom:5px}
+  .entry .nums{font-size:14px;line-height:1.7}
+  .entry .del{float:right;color:var(--mute);background:none;border:0;font-size:13px}
+</style>
+</head>
+<body>
+
+<!-- CAPTURE -->
+<section class="view active" id="captureView">
+  <video id="cam" playsinline autoplay muted></video>
+  <canvas id="overlay"></canvas>
+
+  <div class="hud">
+    <div class="pill"><span class="swatch" id="swatch"></span><span id="status">Starting camera…</span></div>
+  </div>
+  <button class="gear" id="gearBtn" aria-label="Tuning">⚙</button>
+
+  <button class="shutter" id="shutter" aria-label="Capture now"></button>
+
+  <div class="result" id="result">
+    <h3 id="resultTitle">Captured</h3>
+    <div class="nums mono" id="resultNums"></div>
+    <div class="row">
+      <button class="ghost" id="discardBtn">Discard</button>
+      <button class="act" id="newBtn">New draw</button>
+    </div>
+  </div>
+
+  <!-- tuning -->
+  <aside class="drawer" id="drawer">
+    <h2>Tuning</h2>
+    <div class="toggle"><span>Auto‑capture on green</span>
+      <input type="checkbox" id="autoCap" checked></div>
+    <div class="toggle"><span>Require exactly 20 lit</span>
+      <input type="checkbox" id="strict20" checked></div>
+    <div class="field">
+      <label>Lit brightness <span class="val" id="brVal">0.55</span></label>
+      <input type="range" id="brightness" min="0.2" max="0.95" step="0.01" value="0.55">
+    </div>
+    <div class="field">
+      <label>Lit saturation min <span class="val" id="satVal">0.00</span></label>
+      <input type="range" id="saturation" min="0" max="0.6" step="0.01" value="0">
+    </div>
+    <div class="field">
+      <label>Min board size <span class="val" id="szVal">0.35</span></label>
+      <input type="range" id="minSize" min="0.2" max="0.7" step="0.01" value="0.35">
+    </div>
+    <p style="font-size:12px;color:var(--mute);line-height:1.5">
+      Fit the board inside the frame with row 1–10 along the <b>TOP</b> edge.
+      Box turns green and captures automatically; or tap the shutter any time.</p>
+  </aside>
+
+  <div class="gate" id="rotateGate">
+    <div style="font-size:34px">↻</div>
+    <div class="big">Rotate to landscape</div>
+    <div class="sub">Turn the phone sideways to scan the board.</div>
+  </div>
+  <div class="gate" id="permGate">
+    <div class="big">Camera access needed</div>
+    <div class="sub" id="permMsg">Allow camera access, then reload. The camera only works over an https:// link.</div>
+  </div>
+  <div class="gate show" id="loadGate">
+    <div class="spin"></div>
+    <div class="sub">Loading vision engine…</div>
+  </div>
+</section>
+
+<!-- HISTORY -->
+<section class="view" id="historyView">
+  <div id="history">
+    <div class="htop">
+      <h1>History</h1>
+      <button id="exportBtn">Export CSV</button>
+    </div>
+    <div id="entries"></div>
+  </div>
+</section>
+
+<nav class="tabs">
+  <button class="tab" id="tabCapture" aria-selected="true">⊹<span>Capture</span><span class="dot"></span></button>
+  <button class="tab" id="tabHistory" aria-selected="false">≣<span>History</span><span class="dot"></span></button>
+</nav>
+
+<script>
+/* ============================================================================
+   Keno Capture — live, in-browser. Port of the native iOS skeleton.
+
+   Flip-proof by construction: the target box is drawn at the TOP of the screen,
+   the user aligns the board's 1–10 row to it, and cells are sampled with row 0
+   = top-of-canvas. The overlay and the sampling share one coordinate space, so
+   they can't desync regardless of which way the phone is turned. iOS Safari
+   renders the rear-camera <video> upright to the current orientation, so the
+   frame we draw to canvas already matches what the user sees.
+
+   OpenCV.js (optional) adds auto board-detection + perspective correction and
+   auto-capture on green. If it fails to load, the shutter still works by
+   sampling the fixed target box directly — so the app is usable with zero deps.
+============================================================================ */
+
+const ROWS = 8, COLS = 10;          // standard board: 8 rows x 10 cols, 1..80
+const BOARD_W = 400, BOARD_H = 320; // rectified sampling resolution (10:8)
+const PROC_W = 480;                 // detection works on a downscaled frame
+const FRAMES_TO_CONFIRM = 8;
+const TARGET = {x:0.15, y:0.12, w:0.70, h:0.76}; // normalized, origin top-left
+
+let cvReady = false, useCV = false;
+let video, overlay, octx, proc, pctx;
+let streak = 0, captured = false, lastQuad = null;
+const cfg = { auto:true, strict:true, brightness:0.55, saturation:0.0, minSize:0.35 };
+
+/* ---- OpenCV bootstrap ---- */
+function onOpenCvReady(){
+  const init = () => { cvReady = true; useCV = true; hide(loadGate); };
+  if (typeof cv === 'undefined') { hide(loadGate); return; }
+  if (cv instanceof Promise) { cv.then(c => { window.cv = c; init(); }); }
+  else if (cv.Mat) { init(); }
+  else { cv['onRuntimeInitialized'] = init; }
+}
+// Safety: if OpenCV never loads, fall back to box-only mode after a beat.
+setTimeout(()=>{ if(!cvReady){ hide(loadGate); useCV=false; } }, 6000);
+
+/* ---- DOM ---- */
+const $ = id => document.getElementById(id);
+const loadGate=$('loadGate'), rotateGate=$('rotateGate'), permGate=$('permGate');
+const statusEl=$('status'), swatch=$('swatch');
+const resultBox=$('result'), resultNums=$('resultNums'), resultTitle=$('resultTitle');
+function show(el){el.classList.add('show')} function hide(el){el.classList.remove('show')}
+
+/* ---- Camera ---- */
+async function startCamera(){
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:{ideal:'environment'}, width:{ideal:1280}, height:{ideal:720} },
+      audio:false
+    });
+    video.srcObject = stream;
+    await video.play();
+    sizeCanvases();
+    requestAnimationFrame(loop);
+  }catch(err){
+    show(permGate);
+    if (location.protocol !== 'https:' && location.hostname !== 'localhost')
+      $('permMsg').textContent = 'The camera needs an https:// link. Host this file (see notes) and open it over https.';
+  }
+}
+
+function sizeCanvases(){
+  overlay.width = overlay.clientWidth; overlay.height = overlay.clientHeight;
+  const vw = video.videoWidth||1280, vh = video.videoHeight||720;
+  proc.width = PROC_W; proc.height = Math.round(PROC_W * vh/vw);
+}
+window.addEventListener('resize', ()=>{ if(video?.videoWidth) sizeCanvases(); });
+
+/* ---- Orientation gate ---- */
+function checkOrientation(){
+  const portrait = window.matchMedia('(orientation: portrait)').matches;
+  rotateGate.classList.toggle('show', portrait);
+}
+window.addEventListener('orientationchange', ()=>setTimeout(()=>{checkOrientation();sizeCanvases();},250));
+window.matchMedia('(orientation: portrait)').addEventListener?.('change', checkOrientation);
+
+/* ---- Main loop ---- */
+let frameSkip = 0;
+function loop(){
+  requestAnimationFrame(loop);
+  if (!video.videoWidth) return;
+  checkOrientation();
+  if (captured) return;
+
+  // Throttle the heavy detection a little for battery/perf.
+  frameSkip = (frameSkip+1) % 2;
+  if (frameSkip!==0 && useCV) { return; }
+
+  // Draw downscaled frame for detection.
+  pctx.drawImage(video, 0, 0, proc.width, proc.height);
+
+  let aligned = false;
+  lastQuad = null;
+  if (useCV && cvReady){
+    const quad = detectBoardQuad();         // in proc coords
+    if (quad){ lastQuad = quad; aligned = quadAligned(quad); }
+    drawOverlay(quad, aligned);
+  } else {
+    drawOverlay(null, false);               // box-only mode: shutter required
+  }
+
+  if (cfg.auto && aligned){
+    streak = Math.min(streak+1, FRAMES_TO_CONFIRM);
+    if (streak >= FRAMES_TO_CONFIRM) tryCapture();
+  } else if (!aligned){
+    streak = 0;
+  }
+  setStatus(aligned);
+}
+
+/* ---- OpenCV board detection ---- */
+let _kernel = null;
+function detectBoardQuad(){
+  if (!_kernel) _kernel = cv.Mat.ones(3,3,cv.CV_8U);
+  const src = cv.imread(proc);
+  const gray = new cv.Mat(), blur = new cv.Mat(), edges = new cv.Mat();
+  const contours = new cv.MatVector(), hier = new cv.Mat();
+  let best = null, bestArea = 0;
+  try{
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+    cv.GaussianBlur(gray, blur, new cv.Size(5,5), 0);
+    cv.Canny(blur, edges, 60, 160);
+    cv.dilate(edges, edges, _kernel);
+    cv.findContours(edges, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+    const frameArea = proc.width*proc.height;
+    for (let i=0;i<contours.size();i++){
+      const c = contours.get(i);
+      const peri = cv.arcLength(c, true);
+      const approx = new cv.Mat();
+      cv.approxPolyDP(c, approx, 0.02*peri, true);
+      if (approx.rows===4 && cv.isContourConvex(approx)){
+        const area = cv.contourArea(approx);
+        if (area > bestArea && area > frameArea*0.12){
+          const pts=[]; for(let j=0;j<4;j++) pts.push({x:approx.data32S[j*2], y:approx.data32S[j*2+1]});
+          const ord = orderCorners(pts);
+          const w = dist(ord.tl,ord.tr), h = dist(ord.tl,ord.bl);
+          const ar = w/Math.max(h,1);
+          if (ar>1.0 && ar<1.7){ bestArea=area; best=ord; }
+        }
+      }
+      approx.delete(); c.delete();
+    }
+  }catch(e){ /* ignore frame errors */ }
+  src.delete(); gray.delete(); blur.delete(); edges.delete(); contours.delete(); hier.delete();
+  return best;
+}
+
+function orderCorners(p){
+  // canvas coords (x right, y down). Top = smaller y = where the 1–10 row goes.
+  const bySum  = [...p].sort((a,b)=>(a.x+a.y)-(b.x+b.y));
+  const byDiff = [...p].sort((a,b)=>(a.x-a.y)-(b.x-b.y));
+  return { tl:bySum[0], br:bySum[3], bl:byDiff[0], tr:byDiff[3] };
+}
+const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+
+function quadAligned(q){
+  // Compare quad bounding box (normalized) to the target box.
+  const xs=[q.tl.x,q.tr.x,q.br.x,q.bl.x], ys=[q.tl.y,q.tr.y,q.br.y,q.bl.y];
+  const minX=Math.min(...xs)/proc.width, maxX=Math.max(...xs)/proc.width;
+  const minY=Math.min(...ys)/proc.height, maxY=Math.max(...ys)/proc.height;
+  const w=maxX-minX, h=maxY-minY, cx=(minX+maxX)/2, cy=(minY+maxY)/2;
+  const tcx=TARGET.x+TARGET.w/2, tcy=TARGET.y+TARGET.h/2;
+  return Math.abs(cx-tcx)<0.10 && Math.abs(cy-tcy)<0.10 &&
+         w > cfg.minSize && Math.abs(w-TARGET.w)<0.22 && Math.abs(h-TARGET.h)<0.22;
+}
+
+/* ---- Capture + sampling ---- */
+function tryCapture(){
+  const nums = readBoard();
+  if (!nums){ streak = Math.max(0, FRAMES_TO_CONFIRM-2); return; } // misread: keep trying
+  captured = true;
+  commitDraw(nums);
+}
+
+// Manual shutter: use detected quad if present, else sample the fixed target box.
+function manualCapture(){
+  if (captured) return;
+  const nums = readBoard(true);
+  if (!nums){ flashStatus('No clear read — adjust framing'); return; }
+  captured = true;
+  commitDraw(nums);
+}
+
+function readBoard(allowBoxFallback=false){
+  // Build a 400x320 top-down board image, then sample 80 cells.
+  const board = document.createElement('canvas');
+  board.width=BOARD_W; board.height=BOARD_H;
+  const bctx = board.getContext('2d', {willReadFrequently:true});
+
+  if (useCV && cvReady && lastQuad){
+    // Perspective warp from the live (full-res) frame for best detail.
+    const full = document.createElement('canvas');
+    full.width = video.videoWidth; full.height = video.videoHeight;
+    full.getContext('2d').drawImage(video,0,0);
+    const sx = full.width/proc.width, sy = full.height/proc.height;
+    const q = lastQuad;
+    const src = cv.imread(full);
+    const dst = new cv.Mat();
+    const from = cv.matFromArray(4,1,cv.CV_32FC2,[
+      q.tl.x*sx,q.tl.y*sy, q.tr.x*sx,q.tr.y*sy, q.br.x*sx,q.br.y*sy, q.bl.x*sx,q.bl.y*sy]);
+    const to = cv.matFromArray(4,1,cv.CV_32FC2,[0,0, BOARD_W,0, BOARD_W,BOARD_H, 0,BOARD_H]);
+    const M = cv.getPerspectiveTransform(from,to);
+    cv.warpPerspective(src,dst,M,new cv.Size(BOARD_W,BOARD_H));
+    cv.imshow(board, dst);
+    src.delete(); dst.delete(); from.delete(); to.delete(); M.delete();
+  } else if (allowBoxFallback){
+    // No detection: assume the user fit the board flat into the target box.
+    const vw=video.videoWidth, vh=video.videoHeight;
+    bctx.drawImage(video, TARGET.x*vw, TARGET.y*vh, TARGET.w*vw, TARGET.h*vh,
+                          0,0,BOARD_W,BOARD_H);
+  } else {
+    return null;
+  }
+
+  const img = bctx.getImageData(0,0,BOARD_W,BOARD_H).data;
+  const lit=[];
+  for (let r=0;r<ROWS;r++){
+    for (let c=0;c<COLS;c++){
+      const cx=Math.round((c+0.5)/COLS*BOARD_W), cy=Math.round((r+0.5)/ROWS*BOARD_H);
+      const {v,s}=avgHSV(img, cx, cy, 5);
+      if (v>=cfg.brightness && s>=cfg.saturation) lit.push(r*COLS+c+1);
+    }
+  }
+  if (cfg.strict && lit.length!==20) return null;
+  return lit;
+}
+
+function avgHSV(data, cx, cy, half){
+  let R=0,G=0,B=0,n=0;
+  for (let y=cy-half;y<=cy+half;y++) for (let x=cx-half;x<=cx+half;x++){
+    if(x<0||x>=BOARD_W||y<0||y>=BOARD_H) continue;
+    const i=(y*BOARD_W+x)*4; R+=data[i];G+=data[i+1];B+=data[i+2];n++;
+  }
+  R/=n*255;G/=n*255;B/=n*255;
+  const mx=Math.max(R,G,B),mn=Math.min(R,G,B),d=mx-mn;
+  return { v:mx, s:mx===0?0:d/mx };
+}
+
+/* ---- Overlay drawing ---- */
+function stateColor(aligned){
+  if (captured) return getCss('--captured');
+  if (aligned)  return getCss('--aligning');
+  return getCss('--searching');
+}
+const getCss = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+function drawOverlay(quad, aligned){
+  const W=overlay.width, H=overlay.height;
+  octx.clearRect(0,0,W,H);
+  // dim surround + clear target window
+  octx.fillStyle='rgba(0,0,0,.45)';
+  octx.fillRect(0,0,W,H);
+  const tx=TARGET.x*W, ty=TARGET.y*H, tw=TARGET.w*W, th=TARGET.h*H;
+  octx.clearRect(tx,ty,tw,th);
+
+  const col = stateColor(aligned);
+  octx.lineWidth=4; octx.strokeStyle=col;
+  roundRect(octx,tx,ty,tw,th,14); octx.stroke();
+
+  // TOP marker
+  octx.fillStyle=col;
+  const label='TOP · align 1–10 here';
+  octx.font='600 13px -apple-system,sans-serif';
+  const lw=octx.measureText(label).width+16;
+  roundRect(octx, tx+tw/2-lw/2, ty-13, lw, 24, 12); octx.fill();
+  octx.fillStyle='#06210f'; octx.textAlign='center'; octx.textBaseline='middle';
+  octx.fillText(label, tx+tw/2, ty-1);
+
+  // detected quad (mapped proc->overlay)
+  if (quad){
+    const sx=W/proc.width, sy=H/proc.height;
+    octx.strokeStyle=col; octx.lineWidth=2; octx.beginPath();
+    octx.moveTo(quad.tl.x*sx,quad.tl.y*sy);
+    [quad.tr,quad.br,quad.bl].forEach(p=>octx.lineTo(p.x*sx,p.y*sy));
+    octx.closePath(); octx.stroke();
+  }
+}
+function roundRect(c,x,y,w,h,r){c.beginPath();c.moveTo(x+r,y);c.arcTo(x+w,y,x+w,y+h,r);
+  c.arcTo(x+w,y+h,x,y+h,r);c.arcTo(x,y+h,x,y,r);c.arcTo(x,y,x+w,y,r);c.closePath();}
+
+/* ---- Status ---- */
+function setStatus(aligned){
+  swatch.style.background = stateColor(aligned);
+  if (captured){ statusEl.textContent='Captured'; return; }
+  if (!useCV){ statusEl.textContent='Fit board in frame, tap shutter'; return; }
+  statusEl.textContent = aligned ? `Hold steady… ${streak}/${FRAMES_TO_CONFIRM}`
+                                 : 'Fit the board inside the frame';
+}
+let flashT=null;
+function flashStatus(t){ statusEl.textContent=t; clearTimeout(flashT);
+  flashT=setTimeout(()=>setStatus(false),1400); }
+
+/* ---- Commit / result ---- */
+function commitDraw(numbers){
+  saveSession({ ts: Date.now(), numbers });
+  resultTitle.textContent = `Captured ${numbers.length} numbers`;
+  resultNums.textContent = numbers.join('  ');
+  show(resultBox);
+}
+function rearm(){ captured=false; streak=0; lastQuad=null; hide(resultBox); }
+function discardLast(){ // remove the just-saved entry
+  const h=loadHistory(); h.shift(); localStorage.setItem(KEY,JSON.stringify(h));
+  renderHistory(); rearm();
+}
+
+/* ---- Storage + CSV ---- */
+const KEY='keno_history_v1';
+function loadHistory(){ try{return JSON.parse(localStorage.getItem(KEY))||[]}catch{return[]} }
+function saveSession(s){ const h=loadHistory(); h.unshift(s); localStorage.setItem(KEY,JSON.stringify(h)); renderHistory(); }
+function deleteAt(i){ const h=loadHistory(); h.splice(i,1); localStorage.setItem(KEY,JSON.stringify(h)); renderHistory(); }
+
+function renderHistory(){
+  const h=loadHistory(); const wrap=$('entries');
+  $('exportBtn').disabled = h.length===0;
+  if (!h.length){ wrap.innerHTML='<div class="empty">No draws yet.<br>Captured boards appear here.</div>'; return; }
+  wrap.innerHTML = h.map((s,i)=>{
+    const t=new Date(s.ts).toLocaleString();
+    const nums=s.numbers.map(n=>String(n).padStart(2,' ')).join('  ');
+    return `<div class="entry"><button class="del" data-i="${i}">Delete</button>
+      <div class="ts">${t}</div><div class="nums mono">${nums}</div></div>`;
+  }).join('');
+  wrap.querySelectorAll('.del').forEach(b=>b.onclick=()=>deleteAt(+b.dataset.i));
+}
+
+function exportCSV(){
+  const h=loadHistory(); if(!h.length) return;
+  // numbers only, one completed draw per row, comma-delimited, no header — oldest first.
+  const body = h.slice().reverse().map(s=>s.numbers.join(',')).join('\n')+'\n';
+  const blob=new Blob([body],{type:'text/csv'});
+  const url=URL.createObjectURL(blob);
+  if (navigator.canShare && navigator.canShare({files:[new File([blob],'draws.csv',{type:'text/csv'})]})){
+    navigator.share({files:[new File([blob],'draws.csv',{type:'text/csv'})], title:'draws.csv'})
+      .catch(()=>downloadUrl(url));
+  } else downloadUrl(url);
+}
+function downloadUrl(url){ const a=document.createElement('a'); a.href=url; a.download='draws.csv';
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),2000); }
+
+/* ---- Tabs + controls ---- */
+function selectTab(which){
+  const cap = which==='capture';
+  $('captureView').classList.toggle('active',cap);
+  $('historyView').classList.toggle('active',!cap);
+  $('tabCapture').setAttribute('aria-selected',cap);
+  $('tabHistory').setAttribute('aria-selected',!cap);
+  if(!cap) renderHistory();
+}
+
+window.addEventListener('DOMContentLoaded', ()=>{
+  video=$('cam'); overlay=$('overlay'); octx=overlay.getContext('2d');
+  proc=document.createElement('canvas'); pctx=proc.getContext('2d',{willReadFrequently:true});
+
+  $('tabCapture').onclick=()=>selectTab('capture');
+  $('tabHistory').onclick=()=>selectTab('history');
+  $('shutter').onclick=manualCapture;
+  $('newBtn').onclick=rearm;
+  $('discardBtn').onclick=discardLast;
+  $('exportBtn').onclick=exportCSV;
+  $('gearBtn').onclick=()=>$('drawer').classList.toggle('open');
+
+  const bind=(id,key,label,fixed=2)=>{ const el=$(id);
+    el.oninput=()=>{ cfg[key]=parseFloat(el.value); $(label).textContent=cfg[key].toFixed(fixed); }; };
+  bind('brightness','brightness','brVal'); bind('saturation','saturation','satVal'); bind('minSize','minSize','szVal');
+  $('autoCap').onchange=e=>cfg.auto=e.target.checked;
+  $('strict20').onchange=e=>cfg.strict=e.target.checked;
+
+  renderHistory();
+  startCamera();
+});
+</script>
+
+<!-- OpenCV.js: auto board-detection + perspective correction (optional). -->
+<script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady()"></script>
+</body>
+</html>
